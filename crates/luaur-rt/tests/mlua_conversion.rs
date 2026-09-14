@@ -496,10 +496,10 @@ fn test_char_from_lua() -> Result<()> {
 #[test]
 fn test_negative_zero_round_trips_as_number() -> Result<()> {
     // Mirrors mlua/upstream Luau: `-0.0` keeps its sign bit through
-    // `eval::<f64>()` and through a script round trip. `Value`'s
-    // representation still normalizes whole-number floats to `Value::Integer`
-    // (same as mlua), so this pins the *conversion* layer, not the `Value`
-    // variant.
+    // `eval::<f64>()` and through a script round trip. Whole-number floats
+    // still normalize to `Value::Integer` (same as mlua) except for `-0.0`,
+    // which this fork keeps as `Value::Number` so the sign survives at the
+    // `Value` layer too; this test pins the conversion layer.
     let lua = Lua::new();
 
     let n = lua.load("-0.0").eval::<f64>()?;
@@ -535,6 +535,33 @@ fn test_negative_zero_round_trips_as_number() -> Result<()> {
     assert_eq!(lua.load("return 42").eval::<i64>()?, 42);
     assert_eq!(lua.load("return 0").eval::<f64>()?, 0.0);
     assert!(!lua.load("return 0").eval::<f64>()?.is_sign_negative());
+
+    Ok(())
+}
+
+/// Fork-local deviation from upstream: `value_from_stack` keeps `-0.0` as
+/// `Value::Number(-0.0)` instead of normalizing it to `Value::Integer(0)`.
+/// Without it every `Value`-typed boundary -- `MultiValue` arguments of a
+/// registered function, table reads, state read-back -- silently drops the
+/// sign, and a host that dispatches dynamically has no typed accessor to fall
+/// back on.
+#[test]
+fn test_negative_zero_survives_the_value_layer() -> Result<()> {
+    let lua = Lua::new();
+
+    let value = lua.load("-0.0").eval::<Value>()?;
+    assert!(
+        matches!(value, Value::Number(n) if n.is_sign_negative()),
+        "expected Value::Number(-0.0), got {value:?}"
+    );
+
+    // Plain zero still normalizes, so serde integer shapes keep working.
+    assert_eq!(lua.load("0").eval::<Value>()?, Value::Integer(0));
+
+    // Table reads go through the same normalization.
+    let table = lua.create_table();
+    table.raw_set("neg", -0.0)?;
+    assert!(matches!(table.raw_get::<Value>("neg")?, Value::Number(n) if n.is_sign_negative()));
 
     Ok(())
 }

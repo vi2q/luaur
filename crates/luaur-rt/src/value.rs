@@ -410,7 +410,12 @@ pub(crate) fn value_from_stack(lua: &Lua, idx: c_int) -> Result<Value> {
             }
             x if x == ttype::NUMBER => {
                 let n = lua_tonumberx(state, idx, core::ptr::null_mut());
-                if is_exact_integer(n) {
+                // `-0.0` is an exact integer (it compares equal to `0`), but
+                // `Value::Integer` cannot carry its sign bit. Only negative
+                // zeroes stay a `Value::Number`, so plain `0` keeps the
+                // whole-number normalization that serde's integer shapes and
+                // `Value::Integer` pattern matches rely on.
+                if is_exact_integer(n) && !(n == 0.0 && n.is_sign_negative()) {
                     Value::Integer(n as i64)
                 } else {
                     Value::Number(n)
