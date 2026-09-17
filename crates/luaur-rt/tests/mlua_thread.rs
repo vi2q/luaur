@@ -16,7 +16,7 @@
 
 use std::panic::catch_unwind;
 
-use luaur_rt::{Error, Function, IntoLua, Lua, Result, Thread, Value};
+use luaur_rt::{Error, Function, IntoLua, Lua, Result, Thread, Value, Variadic};
 
 #[test]
 fn test_thread() -> Result<()> {
@@ -293,5 +293,136 @@ fn test_thread_resume_bad_arg() -> Result<()> {
     let res = f.resume::<String>(()).unwrap();
     assert_eq!(res, "okay");
 
+    Ok(())
+}
+
+/// A resume that carries more values than the destination frame's allowance.
+///
+/// `Thread::resume` moves the coroutine's results to the parent state with
+/// `lua_xmove`, whose `api_check` requires room on the parent's *current frame*
+/// (`ci->top - top >= n`). `lua_checkstack` grows the state's allocation but not
+/// that allowance, and the main state's base frame allows `LUA_MINSTACK` (20)
+/// values, so a coroutine returning more than that tripped
+/// `LUAU_ASSERT ... lua_xmove.rs:17` (SIGTRAP) — hit by pillar's cooperative
+/// host-call protocol, whose tool calls resume from Rust and can return a table
+/// of any size.
+#[test]
+fn test_thread_resume_more_values_than_the_frame_allowance() -> Result<()> {
+    let lua = Lua::new();
+    let thread = lua.create_thread(
+        lua.load(
+            r#"
+            return function()
+                local values = {}
+                for index = 1, 40 do values[index] = index end
+                return table.unpack(values)
+            end
+            "#,
+        )
+        .eval::<Function>()?,
+    )?;
+
+    let values: Variadic<i64> = thread.resume(())?;
+    let collected: Vec<i64> = values.into_iter().collect();
+    assert_eq!(collected.len(), 40);
+    assert_eq!(collected[0], 1);
+    assert_eq!(collected[39], 40);
+    Ok(())
+}
+
+/// The same move, but the coroutine *yielded first*: the shape pillar's host
+/// calls have (a tool suspends on a host call, the host answers, the tool
+/// finishes). If the post-yield stack window is what `finish_resume` counts as
+/// "results", the move carries the function's live registers, not its return
+/// values.
+#[test]
+fn test_thread_resume_after_a_yield_moves_only_the_results() -> Result<()> {
+    let lua = Lua::new();
+    let thread = lua.create_thread(
+        lua.load(
+            r#"
+            return function()
+                -- A frame with plenty of locals, so a stale window is visible.
+                local a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+                local b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+                local answer = coroutine.yield("waiting")
+                return answer, a1 + b10
+            end
+            "#,
+        )
+        .eval::<Function>()?,
+    )?;
+
+    let yielded: String = thread.resume(())?;
+    assert_eq!(yielded, "waiting");
+    let (answer, sum): (i64, i64) = thread.resume((7,))?;
+    assert_eq!(answer, 7);
+    assert_eq!(sum, 21);
+    Ok(())
+}
+
+/// An *erroring* coroutine with a large stack window.
+///
+/// `finish_resume`'s error branch moves `lua_gettop(co)` values out of the
+/// coroutine **without** reserving room on the parent frame (the success branch
+/// does `lua_checkstack` first). An errored coroutine leaves its whole register
+/// window on the stack, so a frame with more locals than the parent's remaining
+/// allowance trips `api_check!(from, (*(*to).ci).top - (*to).top >= n)` in
+/// `lua_xmove` (SIGTRAP). This is the shape pillar hit: a Lua tool suspends on a
+/// host call and then raises.
+#[test]
+fn test_thread_resume_error_with_a_large_stack_window() -> Result<()> {
+    let lua = Lua::new();
+    let thread = lua.create_thread(
+        lua.load(
+            r#"
+            return function()
+                local a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+                local b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+                local c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = 21, 22, 23, 24, 25, 26, 27, 28, 29, 30
+                error("boom " .. tostring(a1 + b10 + c1))
+            end
+            "#,
+        )
+        .eval::<Function>()?,
+    )?;
+
+    let error = thread.resume::<Value>(()).expect_err("the coroutine errors");
+    assert!(error.to_string().contains("boom 42"), "{error}");
+    Ok(())
+}
+
+/// The shape pillar hit: a tool yields (a host call), the host answers, and then
+/// a *Rust* host function raises inside the coroutine. A Rust-raised error
+/// unwinds differently from a Lua `error(...)`, and the coroutine is left with
+/// its whole register window on the stack.
+#[test]
+fn test_thread_resume_rust_error_after_a_yield_with_a_large_window() -> Result<()> {
+    let lua = Lua::new();
+    let host = Function::wrap(|()| Err::<Value, Error>(Error::runtime("host failure")));
+    let host: Value = {
+        use luaur_rt::IntoLua;
+        host.into_lua(&lua)?
+    };
+    let thread = lua.create_thread(
+        lua.load(
+            r#"
+            return function(host)
+                local a1, a2, a3, a4, a5, a6, a7, a8, a9, a10 = 1, 2, 3, 4, 5, 6, 7, 8, 9, 10
+                local b1, b2, b3, b4, b5, b6, b7, b8, b9, b10 = 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
+                local c1 = coroutine.yield("waiting")
+                return host()
+            end
+            "#,
+        )
+        .eval::<Function>()?,
+    )?;
+
+    let yielded: String = thread.resume((host,))?;
+    assert_eq!(yielded, "waiting");
+    let error = thread
+        .resume::<Value>(())
+        .expect_err("the host failure propagates");
+    assert!(error.to_string().contains("host failure"), "{error}");
     Ok(())
 }

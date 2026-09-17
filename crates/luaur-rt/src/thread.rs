@@ -178,13 +178,23 @@ impl Thread {
         let co = self.thread_state;
         unsafe {
             if status != status::OK && status != status::YIELD && status != status::BREAK {
-                // Error: the coroutine left the error object on its own stack.
-                let nres = lua_gettop(co);
-                if nres > 0 {
-                    lua_xmove(co, parent, nres);
+                // Error: the coroutine left the error object at the *top* of its
+                // stack. Beneath it sits its whole register window — an errored
+                // frame is not trimmed the way a `return` trims it — so moving
+                // `lua_gettop(co)` values out would push the window onto the
+                // parent, and `lua_xmove`'s frame check trips as soon as the
+                // window is larger than the parent frame's remaining allowance
+                // (`LUA_MINSTACK` for the base frame), which is a hard
+                // `LUAU_ASSERT` (SIGTRAP) rather than an error. Lua's own error
+                // path moves exactly the error object and reserves room first
+                // (`auxresumecont`); do the same.
+                if lua_gettop(co) > 0 {
+                    if lua_checkstack(parent, 2) == 0 {
+                        return Err(Error::RuntimeError("stack overflow".to_string()));
+                    }
+                    lua_xmove(co, parent, 1);
                 }
                 let err = lua.pop_error(status);
-                // Clear any extra values the coroutine left on the parent.
                 return Err(err);
             }
             // `LUA_BREAK` is an interrupt-driven yield: the coroutine produced
