@@ -179,6 +179,7 @@ impl Lua {
     }
 
     /// The VM-default compiler installed via [`Lua::set_compiler`], if any.
+    #[cfg_attr(not(feature = "compiler"), allow(dead_code))]
     pub(crate) fn vm_compiler(&self) -> Option<Compiler> {
         let state = self.state();
         let key = unsafe { global_key(state) };

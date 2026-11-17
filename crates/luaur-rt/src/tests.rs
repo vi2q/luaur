@@ -431,3 +431,16 @@ fn negate_integer_literal_zero_does_not_overflow() {
     assert!(lua.load("return -1i").into_function().is_ok());
     assert!(lua.load("return 0i").into_function().is_ok());
 }
+
+#[test]
+fn bytecode_compiled_ahead_runs_without_its_source() {
+    let lua = Lua::new();
+    let bytecode = lua
+        .load("local x = ... or 20\nreturn x + 1")
+        .bytecode()
+        .unwrap();
+    let ran: i64 = lua.load_bytecode(bytecode.clone()).call(41).unwrap();
+    assert_eq!(ran, 42);
+    let evaluated: i64 = lua.load_bytecode(bytecode).eval().unwrap();
+    assert_eq!(evaluated, 21);
+}

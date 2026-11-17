@@ -10,13 +10,19 @@ use crate::state::Lua;
 use crate::sys::*;
 use crate::traits::FromLuaMulti;
 
+#[cfg(feature = "compiler")]
 use luaur_ast::records::parse_options::ParseOptions;
+#[cfg(feature = "compiler")]
 use luaur_bytecode::records::bytecode_encoder::BytecodeEncoder;
+#[cfg(feature = "compiler")]
 use luaur_compiler::functions::compile::compile as compiler_compile;
+#[cfg(feature = "compiler")]
 use luaur_compiler::records::compile_options::CompileOptions;
 
 /// No-op bytecode encoder (same as the umbrella crate's `NoopEncoder`).
+#[cfg(feature = "compiler")]
 struct NoopEncoder;
+#[cfg(feature = "compiler")]
 impl BytecodeEncoder for NoopEncoder {
     fn encode(&mut self, _data: &mut [u32]) {}
 }
@@ -36,6 +42,9 @@ pub struct Chunk {
     /// `None`, the VM-default compiler (`Lua::set_compiler`) is used, falling
     /// back to luaur's default options.
     pub(crate) compiler: Option<crate::compiler::Compiler>,
+    /// Bytecode compiled ahead (see [`Lua::load_bytecode`]); the chunk runs it
+    /// instead of compiling `source`.
+    pub(crate) bytecode: Option<Vec<u8>>,
 }
 
 impl Chunk {
@@ -84,8 +93,32 @@ impl Chunk {
         &self.name
     }
 
-    /// Compile the source to bytecode (or return a [`Error::SyntaxError`]).
+    /// The chunk's bytecode: what it was loaded with, or its source compiled
+    /// (a [`Error::SyntaxError`] when the source does not compile). A host
+    /// can compile a script ahead with this and later run it with
+    /// [`Lua::load_bytecode`], on a build without the `compiler` feature.
+    pub fn bytecode(&self) -> Result<Vec<u8>> {
+        self.compile()
+    }
+
     fn compile(&self) -> Result<Vec<u8>> {
+        if let Some(bytecode) = &self.bytecode {
+            return Ok(bytecode.clone());
+        }
+        self.compile_source()
+    }
+
+    #[cfg(not(feature = "compiler"))]
+    fn compile_source(&self) -> Result<Vec<u8>> {
+        Err(Error::runtime(format!(
+            "{}: this build cannot compile Luau source; load its bytecode instead",
+            self.name
+        )))
+    }
+
+    /// Compile the source to bytecode (or return a [`Error::SyntaxError`]).
+    #[cfg(feature = "compiler")]
+    fn compile_source(&self) -> Result<Vec<u8>> {
         // Pick the effective compiler: a per-chunk one wins over the VM-default
         // one (`Lua::set_compiler`); otherwise use luaur's default options.
         let effective = self.compiler.clone().or_else(|| self.lua.vm_compiler());
@@ -195,9 +228,13 @@ impl Chunk {
             name: self.name.clone(),
             environment: self.environment.clone(),
             compiler: self.compiler.clone(),
+            bytecode: None,
         };
-        if let Ok(f) = expr.into_function() {
-            return f.call::<R>(());
+        // Bytecode is run as it was compiled.
+        if self.bytecode.is_none() {
+            if let Ok(f) = expr.into_function() {
+                return f.call::<R>(());
+            }
         }
         // Fall back to statement-block mode.
         let f = self.into_function()?;
@@ -242,9 +279,13 @@ impl Chunk {
             name: self.name.clone(),
             environment: self.environment.clone(),
             compiler: self.compiler.clone(),
+            bytecode: None,
         };
-        if let Ok(f) = expr.into_function() {
-            return f.call_async::<R>(()).await;
+        // Bytecode is run as it was compiled.
+        if self.bytecode.is_none() {
+            if let Ok(f) = expr.into_function() {
+                return f.call_async::<R>(()).await;
+            }
         }
         let f = self.into_function()?;
         f.call_async::<R>(()).await

@@ -127,6 +127,7 @@ impl Compiler {
     ///
     /// The `null`-terminated pointer array for `mutable_globals` is built into
     /// `scratch`, which must also outlive the returned options.
+    #[cfg_attr(not(feature = "compiler"), allow(dead_code))]
     pub(crate) fn to_options<'a>(
         &'a self,
         scratch: &'a mut Vec<*const core::ffi::c_char>,

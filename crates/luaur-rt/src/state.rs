@@ -513,6 +513,21 @@ impl Lua {
             name: "chunk".to_string(),
             environment: None,
             compiler: None,
+            bytecode: None,
+        }
+    }
+
+    /// Load bytecode compiled ahead with [`Chunk::bytecode`]: the chunk runs
+    /// it without compiling, so a build without the `compiler` feature can
+    /// run scripts. Mirrors `mlua::Lua::load` with `ChunkMode::Binary`.
+    pub fn load_bytecode(&self, bytecode: impl Into<Vec<u8>>) -> Chunk {
+        Chunk {
+            lua: self.clone(),
+            source: String::new(),
+            name: "chunk".to_string(),
+            environment: None,
+            compiler: None,
+            bytecode: Some(bytecode.into()),
         }
     }
 
