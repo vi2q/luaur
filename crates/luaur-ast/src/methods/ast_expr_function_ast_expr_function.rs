@@ -53,7 +53,6 @@ impl AstExprFunction {
     }
 }
 
-#[export_name = "luaur_ast_expr_function_ast_expr_function"]
 pub unsafe extern "C" fn ast_expr_function_ast_expr_function(
     location: Location,
     attributes: AstArray<*mut AstAttr>,

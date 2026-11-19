@@ -6,7 +6,6 @@ use crate::records::gc_object::GCObject;
 use crate::records::lua_state::lua_State;
 use crate::type_aliases::luau_class::LuauClass;
 
-#[export_name = "luaur_luaA_pushclass"]
 #[allow(non_snake_case)]
 pub unsafe fn luaA_pushclass(l: *mut lua_State, lco: *mut LuauClass) {
     crate::api_check!(l, !lco.is_null());

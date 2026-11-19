@@ -16,7 +16,6 @@ unsafe extern "C" {
     fn time(t: *mut time_t) -> time_t;
 }
 
-#[export_name = "luaur_os_time"]
 pub unsafe fn os_time(l: *mut lua_State) -> c_int {
     let t: i64;
 

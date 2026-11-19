@@ -4,7 +4,6 @@ use crate::type_aliases::lua_state::lua_State;
 use core::ffi::c_char;
 use core::ffi::c_int;
 
-#[export_name = "luaur_lua_l_optlstring"]
 pub unsafe fn lua_l_optlstring(
     L: *mut lua_State,
     narg: c_int,

@@ -14,7 +14,6 @@ impl CstExprTypeAssertion {
     }
 }
 
-#[export_name = "luaur_cst_expr_type_assertion_cst_expr_type_assertion"]
 pub extern "C" fn cst_expr_type_assertion_cst_expr_type_assertion(
     op_position: Position,
 ) -> CstExprTypeAssertion {

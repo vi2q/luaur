@@ -7,5 +7,4 @@ impl AssemblyBuilderA64 {
     }
 }
 
-#[export_name = "luaur_assembly_builder_a_64_is_fmov_supported_fp_64"]
 pub extern "C" fn assembly_builder_a_64_is_fmov_supported_fp_64() {}

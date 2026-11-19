@@ -6,7 +6,6 @@ use crate::records::call_info::CallInfo;
 use crate::records::lua_state::lua_State;
 use crate::records::proto::Proto;
 
-#[export_name = "luaur_lua_getargument"]
 pub unsafe fn lua_getargument(
     l: *mut lua_State,
     level: core::ffi::c_int,

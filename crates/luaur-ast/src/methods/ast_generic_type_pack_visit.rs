@@ -14,7 +14,6 @@ impl AstVisitable for AstGenericTypePack {
     }
 }
 
-#[export_name = "luaur_ast_generic_type_pack_visit"]
 pub extern "C" fn ast_generic_type_pack_visit(
     this: *const AstGenericTypePack,
     visitor: *mut dyn AstVisitor,

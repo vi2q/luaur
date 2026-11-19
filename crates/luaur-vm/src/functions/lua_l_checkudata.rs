@@ -8,7 +8,6 @@ use crate::macros::lua_registryindex::LUA_REGISTRYINDEX;
 use crate::type_aliases::lua_state::lua_State;
 use core::ffi::{c_int, c_void};
 
-#[export_name = "luaur_lua_l_checkudata"]
 pub unsafe fn lua_l_checkudata(L: *mut lua_State, ud: c_int, tname: &str) -> *mut c_void {
     let p = lua_touserdata(L, ud);
     if !p.is_null() {

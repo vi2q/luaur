@@ -15,7 +15,6 @@ impl CstExprIndexExpr {
     }
 }
 
-#[export_name = "luaur_cst_expr_index_expr_cst_expr_index_expr"]
 pub extern "C" fn cst_expr_index_expr_cst_expr_index_expr(
     open_bracket_position: Position,
     close_bracket_position: Position,

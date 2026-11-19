@@ -14,7 +14,6 @@ impl CstGenericType {
     }
 }
 
-#[export_name = "luaur_cst_generic_type_cst_generic_type"]
 pub extern "C" fn cst_generic_type_cst_generic_type(
     default_equals_position: Position,
 ) -> CstGenericType {

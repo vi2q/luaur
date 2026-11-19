@@ -3,7 +3,6 @@ use crate::functions::lua_l_error_l::lua_l_error_l;
 use crate::type_aliases::lua_state::lua_State;
 use core::ffi::c_int;
 
-#[export_name = "luaur_lua_l_argerror_l"]
 pub unsafe fn lua_l_argerror_l(L: *mut lua_State, narg: c_int, extramsg: &str) -> ! {
     let fname = currfuncname(L);
 
