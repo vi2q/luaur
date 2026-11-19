@@ -26,7 +26,6 @@ impl AstTypeError {
     }
 }
 
-#[export_name = "luaur_ast_type_error_ast_type_error"]
 pub extern "C" fn ast_type_error_ast_type_error(
     location: Location,
     types: AstArray<*mut AstType>,

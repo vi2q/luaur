@@ -10,7 +10,6 @@ use crate::records::loc_var::LocVar;
 use crate::records::lua_state::lua_State;
 use crate::records::proto::Proto;
 
-#[export_name = "luaur_lua_setlocal"]
 pub unsafe fn lua_setlocal(
     L: *mut lua_State,
     level: core::ffi::c_int,

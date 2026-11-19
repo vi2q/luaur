@@ -19,7 +19,6 @@ impl CstExprInterpString {
     }
 }
 
-#[export_name = "luaur_cst_expr_interp_string_cst_expr_interp_string"]
 pub extern "C" fn cst_expr_interp_string_cst_expr_interp_string(
     source_strings: AstArray<AstArray<i8>>,
     string_positions: AstArray<Position>,

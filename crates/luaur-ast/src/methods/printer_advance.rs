@@ -26,7 +26,6 @@ impl<'a> Printer<'a> {
     }
 }
 
-#[export_name = "luaur_printer_advance"]
 pub extern "C" fn printer_advance(this: *mut Printer, new_pos: *const Position) {
     unsafe {
         (*this).advance(&*new_pos);

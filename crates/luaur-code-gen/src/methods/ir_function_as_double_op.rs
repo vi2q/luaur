@@ -19,7 +19,6 @@ impl IrFunction {
     }
 }
 
-#[export_name = "luaur_ir_function_as_double_op"]
 pub extern "C" fn ir_function_as_double_op() {}
 
 impl IrFunction {

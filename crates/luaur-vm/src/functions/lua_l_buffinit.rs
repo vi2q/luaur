@@ -3,7 +3,6 @@ use crate::records::lua_l_strbuf::LuaLStrbuf;
 use crate::type_aliases::lua_state::lua_State;
 use core::ffi::c_char;
 
-#[export_name = "luaur_lua_l_buffinit"]
 #[allow(non_snake_case)]
 pub unsafe fn lua_l_buffinit(L: *mut lua_State, B: *mut LuaLStrbuf) {
     // start with an internal buffer

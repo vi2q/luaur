@@ -5,7 +5,6 @@ use crate::type_aliases::lua_state::lua_State;
 use crate::type_aliases::stk_id::StkId;
 use crate::type_aliases::t_value::TValue;
 
-#[export_name = "luaur_lua_lessthan"]
 #[allow(non_snake_case)]
 pub unsafe fn lua_lessthan(
     L: *mut lua_State,

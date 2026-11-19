@@ -19,7 +19,6 @@ impl AstExprTable {
     }
 }
 
-#[export_name = "luaur_ast_expr_table_ast_expr_table"]
 pub extern "C" fn ast_expr_table_ast_expr_table(
     location: Location,
     items: AstArray<Item>,

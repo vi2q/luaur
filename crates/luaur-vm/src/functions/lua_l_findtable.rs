@@ -13,7 +13,6 @@ use core::ffi::{c_char, c_int};
 /// `const char* luaL_findtable(lua_State* L, int idx, const char* fname, int szhint)`
 ///
 /// C++ source: `VM/src/laux.cpp:330`
-#[export_name = "luaur_luaL_findtable"]
 pub unsafe fn luaL_findtable(
     l: *mut lua_State,
     idx: c_int,

@@ -15,7 +15,6 @@ impl CstTypePackGeneric {
 }
 
 #[allow(non_snake_case)]
-#[export_name = "luaur_cst_type_pack_generic_cst_type_pack_generic"]
 pub extern "C" fn cst_type_pack_generic_cst_type_pack_generic(
     ellipsis_position: Position,
 ) -> CstTypePackGeneric {

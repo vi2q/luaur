@@ -387,7 +387,9 @@ fn test_thread_resume_error_with_a_large_stack_window() -> Result<()> {
         .eval::<Function>()?,
     )?;
 
-    let error = thread.resume::<Value>(()).expect_err("the coroutine errors");
+    let error = thread
+        .resume::<Value>(())
+        .expect_err("the coroutine errors");
     assert!(error.to_string().contains("boom 42"), "{error}");
     Ok(())
 }

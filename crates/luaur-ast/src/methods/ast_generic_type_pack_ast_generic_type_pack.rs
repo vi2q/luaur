@@ -18,7 +18,6 @@ impl AstGenericTypePack {
     }
 }
 
-#[export_name = "luaur_ast_generic_type_pack_ast_generic_type_pack"]
 pub extern "C" fn ast_generic_type_pack_ast_generic_type_pack(
     location: Location,
     name: AstName,

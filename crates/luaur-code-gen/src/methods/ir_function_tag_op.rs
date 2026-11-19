@@ -19,5 +19,4 @@ impl IrFunction {
     }
 }
 
-#[export_name = "luaur_ir_function_tag_op"]
 pub extern "C" fn ir_function_tag_op() {}

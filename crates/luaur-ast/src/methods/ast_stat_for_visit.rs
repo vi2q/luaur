@@ -23,7 +23,6 @@ impl AstVisitable for AstStatFor {
     }
 }
 
-#[export_name = "luaur_ast_stat_for_visit"]
 pub extern "C" fn ast_stat_for_visit(this: *const AstStatFor, visitor: *mut dyn AstVisitor) {
     unsafe {
         (*this).visit(&mut *visitor);
