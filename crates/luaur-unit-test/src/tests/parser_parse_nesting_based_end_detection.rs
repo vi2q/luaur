@@ -31,12 +31,6 @@ end
     );
 
     luaur_common::LUAU_ASSERT!(result.errors.len() == 1);
-    let msg = unsafe {
-        core::ffi::CStr::from_ptr(
-            result.errors[0].get_message().as_ptr() as *const core::ffi::c_char
-        )
-    }
-    .to_string_lossy();
     let expected_msg = "Expected 'end' (to close 'function' at line 2), got <eof>; did you forget to close 'else' at line 8?" ;
-    assert_eq!(&*msg, expected_msg);
+    assert_eq!(result.errors[0].get_message(), expected_msg);
 }
