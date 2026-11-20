@@ -101,16 +101,24 @@ pub(crate) fn clear_interrupt(state: *mut lua_State) {
 /// the user callback path, and so do we (return immediately) so the user
 /// closure only sees real instruction safepoints.
 unsafe extern "C-unwind" fn interrupt_trampoline(state: *mut lua_State, gc: c_int) {
+    if unsafe { interrupt_trampoline_inner(state, gc) } {
+        unsafe { lua_error(state) };
+    }
+}
+
+/// Runs the user interrupt callback and pushes any error onto the Lua stack
+/// before returning `true`, so all Rust locals drop cleanly before `lua_error`.
+unsafe fn interrupt_trampoline_inner(state: *mut lua_State, gc: c_int) -> bool {
     if gc >= 0 {
         // GC step interrupt — not surfaced to the user callback.
-        return;
+        return false;
     }
     let key = unsafe { vm_key(state) };
     // Take the closure out of the map for the duration of the call so a
     // re-entrant `set_interrupt` from inside the callback can't alias the
     // borrow. Put it back afterwards (unless the callback replaced it).
     let cb = INTERRUPTS.with(|m| m.borrow_mut().remove(&key));
-    let Some(cb) = cb else { return };
+    let Some(cb) = cb else { return false };
 
     let lua = unsafe { Lua::from_borrowed(state) };
     let result = cb(&lua);
@@ -122,27 +130,29 @@ unsafe extern "C-unwind" fn interrupt_trampoline(state: *mut lua_State, gc: c_in
     });
 
     match result {
-        Ok(VmState::Continue) => {}
-        Ok(VmState::Yield) => unsafe {
-            // Request a yield — but only at a yieldable point. Inside a
-            // metamethod / C-call boundary Luau's `lua_break` would raise
-            // "attempt to break across metamethod/C-call boundary"; upstream
-            // (and mlua) silently ignore the yield request there, so we gate it
-            // on `lua_isyieldable` and otherwise just continue.
-            if lua_isyieldable(state) != 0 {
-                let _ = luaur_vm::functions::lua_break::lua_break(state);
+        Ok(VmState::Continue) => false,
+        Ok(VmState::Yield) => {
+            unsafe {
+                // Request a yield — but only at a yieldable point. Inside a
+                // metamethod / C-call boundary Luau's `lua_break` would raise
+                // "attempt to break across metamethod/C-call boundary"; upstream
+                // (and mlua) silently ignore the yield request there, so we gate it
+                // on `lua_isyieldable` and otherwise just continue.
+                if lua_isyieldable(state) != 0 {
+                    let _ = luaur_vm::functions::lua_break::lua_break(state);
+                }
             }
-        },
-        Err(e) => unsafe {
-            // Raise the error as a Lua error. Push the message and longjmp.
-            raise_error(state, &e);
-        },
+            false
+        }
+        Err(e) => {
+            unsafe { push_error(state, &e) };
+            true
+        }
     }
 }
 
-/// Push `e`'s message as a string error object and `lua_error` it (does not
-/// return).
-unsafe fn raise_error(state: *mut lua_State, e: &Error) -> ! {
+/// Push `e`'s message as a string error object without invoking `lua_error`.
+unsafe fn push_error(state: *mut lua_State, e: &Error) {
     // Use the bare message for a runtime error (so it round-trips back through
     // `pop_error` as `RuntimeError(msg)` without a doubled "runtime error: "
     // prefix); fall back to the full Display for other error kinds.
@@ -156,7 +166,6 @@ unsafe fn raise_error(state: *mut lua_State, e: &Error) -> ! {
         // `api_incr_top` stack invariant in `lua_pushlstring` holds.
         lua_rawcheckstack(state, 1);
         lua_pushlstring(state, msg.as_ptr() as *const c_char, msg.len());
-        lua_error(state)
     }
 }
 

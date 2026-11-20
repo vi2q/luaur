@@ -29,6 +29,7 @@
 //! ordinary catchable Lua error, not a process abort.
 
 use std::any::TypeId;
+#[cfg(not(all(target_arch = "wasm32", panic = "abort")))]
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::error::{Error, Result};
@@ -101,12 +102,10 @@ pub(crate) fn is_structured(err: &Error) -> bool {
     }
 }
 
-/// Push a structured [`Error`] as a wrapped-error userdata error object and
-/// invoke [`lua_error`]. Diverges (unwinds via the VM's longjmp).
-///
-/// # Safety
-/// `state` must be a valid `lua_State` with at least one free stack slot.
-pub(crate) unsafe fn raise_structured_error(state: *mut lua_State, err: Error) -> c_int {
+/// Push a structured [`Error`] as a wrapped-error userdata onto the Lua stack
+/// (falling back to a string error if userdata allocation fails), without
+/// invoking [`lua_error`].
+unsafe fn push_structured_error(state: *mut lua_State, err: Error) {
     unsafe {
         let storage = lua_newuserdatadtor(
             state,
@@ -114,8 +113,8 @@ pub(crate) unsafe fn raise_structured_error(state: *mut lua_State, err: Error) -
             Some(wrapped_error_dtor),
         );
         if storage.is_null() {
-            // Fall back to a string error if we cannot allocate the userdata.
-            return raise_lua_error(state, &err.to_string());
+            push_lua_error_string(state, &err.to_string());
+            return;
         }
         core::ptr::write(
             storage as *mut WrappedError,
@@ -124,6 +123,18 @@ pub(crate) unsafe fn raise_structured_error(state: *mut lua_State, err: Error) -
                 error: Box::new(err),
             },
         );
+    }
+}
+
+/// Push a structured [`Error`] as a wrapped-error userdata error object and
+/// invoke [`lua_error`]. Diverges (unwinds via the VM's longjmp).
+///
+/// # Safety
+/// `state` must be a valid `lua_State` with at least one free stack slot.
+#[allow(dead_code)]
+pub(crate) unsafe fn raise_structured_error(state: *mut lua_State, err: Error) -> c_int {
+    unsafe {
+        push_structured_error(state, err);
         lua_error(state) // diverges (`-> !`)
     }
 }
@@ -179,13 +190,24 @@ unsafe extern "C" fn callback_dtor(ptr: *mut c_void) {
 }
 
 /// The one C trampoline shared by every `create_function` closure.
+///
+/// Error paths push the Lua error value inside `trampoline_inner` and return
+/// `Err(())` so every Rust heap local (`args`, `results`, `err`, `msg`, `lua`)
+/// drops normally before `lua_error` unwinds or jumps across a JS trampoline.
 unsafe fn trampoline(state: *mut lua_State) -> c_int {
+    match unsafe { trampoline_inner(state) } {
+        Ok(n) => n,
+        Err(()) => unsafe { lua_error(state) },
+    }
+}
+
+unsafe fn trampoline_inner(state: *mut lua_State) -> core::result::Result<c_int, ()> {
     unsafe {
         // 1. Recover the boxed callback from upvalue 1.
         let ud = lua_touserdata(state, lua_upvalueindex(1));
         if ud.is_null() {
-            // Should be impossible; fail loudly but safely via lua_error.
-            return raise_lua_error(state, "luaur-rt: missing callback upvalue");
+            push_lua_error_string(state, "luaur-rt: missing callback upvalue");
+            return Err(());
         }
         let callback = &*(ud as *const BoxedCallback);
 
@@ -197,48 +219,52 @@ unsafe fn trampoline(state: *mut lua_State) -> c_int {
         let nargs = lua_gettop(state);
         let args = match collect_args(&lua, nargs) {
             Ok(a) => a,
-            Err(e) => return raise_lua_error(state, &e.to_string()),
+            Err(e) => {
+                push_lua_error_string(state, &e.to_string());
+                return Err(());
+            }
         };
 
-        // 4. Run the user closure inside catch_unwind so a user `panic!` never
-        //    becomes a nested panic when we then call lua_error.
+        // 4. Run the user closure inside catch_unwind when unwinding is enabled
+        //    so a user `panic!` never becomes a nested panic when we then call
+        //    lua_error. Under wasm32 + panic=abort, catch_unwind is a no-op.
+        #[cfg(not(all(target_arch = "wasm32", panic = "abort")))]
         let outcome: std::thread::Result<Result<MultiValue>> =
             catch_unwind(AssertUnwindSafe(|| callback(&lua, args)));
+        #[cfg(all(target_arch = "wasm32", panic = "abort"))]
+        let outcome: core::result::Result<Result<MultiValue>, ()> = Ok(callback(&lua, args));
 
         match outcome {
             Ok(Ok(results)) => {
-                // 5a. Push every result and return its count. Reserve stack space
-                //     first: an unchecked push of a very large result list would
-                //     overflow the Lua stack and trip a fatal VM assertion
-                //     (SIGTRAP) instead of erroring. Guard it and raise a
-                //     catchable error if the results cannot fit (mirroring mlua).
                 let n = results.len() as c_int;
                 if lua_checkstack(state, n.max(1)) == 0 {
-                    return raise_lua_error(state, "too many results to return to Lua");
+                    push_lua_error_string(state, "too many results to return to Lua");
+                    return Err(());
                 }
                 for v in results.iter() {
                     if let Err(e) = lua.push_value(v) {
-                        return raise_lua_error(state, &e.to_string());
+                        push_lua_error_string(state, &e.to_string());
+                        return Err(());
                     }
                 }
-                n
+                Ok(n)
             }
             Ok(Err(err)) => {
-                // 5b. The closure returned Err -> raise it as a Lua error.
-                //     Structured errors (scope destruction) travel as a userdata
-                //     error object so the caller can pattern-match on them; all
-                //     others keep the flat string path.
                 if is_structured(&err) {
-                    raise_structured_error(state, err)
+                    push_structured_error(state, err);
                 } else {
-                    raise_lua_error(state, &err.to_string())
+                    push_lua_error_string(state, &err.to_string());
                 }
+                Err(())
             }
+            #[cfg(not(all(target_arch = "wasm32", panic = "abort")))]
             Err(panic_payload) => {
-                // 5c. The closure panicked -> turn it into a catchable Lua error.
                 let msg = panic_message(&panic_payload);
-                raise_lua_error(state, &format!("rust panic: {msg}"))
+                push_lua_error_string(state, &format!("rust panic: {msg}"));
+                Err(())
             }
+            #[cfg(all(target_arch = "wasm32", panic = "abort"))]
+            Err(()) => Err(()),
         }
     }
 }
@@ -257,16 +283,15 @@ unsafe fn collect_args(lua: &Lua, nargs: c_int) -> Result<MultiValue> {
     Ok(m)
 }
 
-/// Push `msg` as the error object and invoke [`lua_error`]. Never returns
-/// normally (it unwinds), but is typed `-> c_int` so call sites read naturally.
-unsafe fn raise_lua_error(state: *mut lua_State, msg: &str) -> c_int {
+/// Push `msg` as the Lua error string without invoking [`lua_error`].
+unsafe fn push_lua_error_string(state: *mut lua_State, msg: &str) {
     unsafe {
         lua_pushlstring(state, msg.as_ptr() as *const c_char, msg.len());
-        lua_error(state) // diverges (`-> !`)
     }
 }
 
 /// Best-effort extraction of a panic payload's message.
+#[cfg(not(all(target_arch = "wasm32", panic = "abort")))]
 fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
         (*s).to_string()

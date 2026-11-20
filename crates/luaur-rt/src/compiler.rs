@@ -13,6 +13,7 @@
 
 use std::ffi::CString;
 
+#[cfg(feature = "compiler")]
 use luaur_compiler::records::compile_options::CompileOptions;
 
 /// Luau bytecode compiler options, mirroring `mlua::Compiler`.
@@ -50,12 +51,23 @@ impl Compiler {
     /// Create a `Compiler` with Luau's default options (optimization level 1,
     /// debug level 1). Mirrors `mlua::Compiler::new`.
     pub fn new() -> Self {
-        let defaults = CompileOptions::default();
+        #[cfg(feature = "compiler")]
+        let (optimization_level, debug_level, type_info_level, coverage_level) = {
+            let defaults = CompileOptions::default();
+            (
+                defaults.optimization_level as u8,
+                defaults.debug_level as u8,
+                defaults.type_info_level as u8,
+                defaults.coverage_level as u8,
+            )
+        };
+        #[cfg(not(feature = "compiler"))]
+        let (optimization_level, debug_level, type_info_level, coverage_level) = (1, 1, 0, 0);
         Compiler {
-            optimization_level: defaults.optimization_level as u8,
-            debug_level: defaults.debug_level as u8,
-            type_info_level: defaults.type_info_level as u8,
-            coverage_level: defaults.coverage_level as u8,
+            optimization_level,
+            debug_level,
+            type_info_level,
+            coverage_level,
             vector_lib: None,
             vector_ctor: None,
             vector_type: None,
@@ -127,7 +139,7 @@ impl Compiler {
     ///
     /// The `null`-terminated pointer array for `mutable_globals` is built into
     /// `scratch`, which must also outlive the returned options.
-    #[cfg_attr(not(feature = "compiler"), allow(dead_code))]
+    #[cfg(feature = "compiler")]
     pub(crate) fn to_options<'a>(
         &'a self,
         scratch: &'a mut Vec<*const core::ffi::c_char>,
