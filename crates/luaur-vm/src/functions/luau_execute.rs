@@ -149,11 +149,11 @@ use luaur_common::macros::luau_insn_op::LUAU_INSN_OP;
 /// to the `template<bool SingleStep>` monomorphs.
 #[allow(non_snake_case)]
 pub unsafe fn luau_execute(L: *mut lua_State) {
+    #[cfg(not(feature = "wasm"))]
     if (*L).singlestep {
-        luau_execute_impl::<true>(L)
-    } else {
-        luau_execute_impl::<false>(L)
+        return luau_execute_impl::<true>(L);
     }
+    luau_execute_impl::<false>(L)
 }
 
 /// C++ `template<bool SingleStep> static void luau_execute(lua_State* L)`
@@ -172,6 +172,7 @@ unsafe fn luau_execute_impl<const SINGLE_STEP: bool>(L: *mut lua_State) {
     // C++ also asserts !isblack(obj2gco(L)) — active threads never turn black.
 
     // VM_HAS_NATIVE entry: execution may continue in native code.
+    #[cfg(not(feature = "wasm"))]
     if ((*(*L).ci).flags as i32 & LUA_CALLINFO_NATIVE) != 0 && !SINGLE_STEP {
         let native_cl = clvalue!((*(*L).ci).func);
         let native_lcl =
@@ -1507,6 +1508,7 @@ unsafe fn luau_execute_impl<const SINGLE_STEP: bool>(L: *mut lua_State) {
                     };
 
                     // VM_HAS_NATIVE
+                    #[cfg(not(feature = "wasm"))]
                     if ((*cip).flags as i32 & LUA_CALLINFO_NATIVE) != 0 && !SINGLE_STEP {
                         if let Some(enter) = (*(*L).global).ecb.enter {
                             if enter(L, nextproto) == 1 {
