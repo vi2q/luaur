@@ -324,12 +324,10 @@ impl Function {
     unsafe fn is_lua_closure(&self) -> bool {
         let state = self.reference.state();
         unsafe {
-            // The function is on top of the stack (index -1). Ask lua_getinfo
-            // about it via the ">" level convention: push the function and use
-            // option ">" so it pops the function and reads its info.
-            lua_pushvalue(state, -1);
+            // Luau's lua_getinfo reads the function at a negative stack index
+            // where it is and leaves it there: it has no ">" option.
             let mut ar: LuaDebug = core::mem::zeroed();
-            let opt = c">s";
+            let opt = c"s";
             let ok = lua_getinfo(state, -1, opt.as_ptr() as *const c_char, &mut ar);
             if ok == 0 {
                 return false;
@@ -351,11 +349,12 @@ impl Function {
             self.reference.push();
             let mut ar: LuaDebug = core::mem::zeroed();
             // Options: n=name, s=source/what/linedefined, a=params/vararg,
-            // u=upvalues. The ">" prefix pops the function from the stack and
-            // reads info about it.
-            let opt = c">nsau";
+            // u=upvalues. Luau's lua_getinfo leaves the function on the stack
+            // (it has no ">" option), so it is popped once the info is read.
+            let opt = c"nsau";
             let ok = lua_getinfo(state, -1, opt.as_ptr() as *const c_char, &mut ar);
             if ok == 0 {
+                lua_pop(state, 1);
                 return FunctionInfo::default();
             }
             let cstr = |p: *const c_char| -> Option<String> {
@@ -382,7 +381,7 @@ impl Function {
                     s
                 }
             });
-            FunctionInfo {
+            let info = FunctionInfo {
                 name: cstr(ar.name),
                 source,
                 short_src: cstr(ar.short_src),
@@ -392,7 +391,9 @@ impl Function {
                 num_upvalues: ar.nupvals,
                 num_params: ar.nparams,
                 is_vararg: ar.isvararg != 0,
-            }
+            };
+            lua_pop(state, 1);
+            info
         }
     }
 }

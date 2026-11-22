@@ -349,11 +349,12 @@ impl Lua {
         V: crate::traits::IntoLua,
         I: IntoIterator<Item = (K, V)>,
     {
-        let t = self.create_table();
-        for (k, v) in iter {
-            t.raw_set(k, v)?;
-        }
-        Ok(t)
+        self.build_table(0, 0, |table| {
+            for (k, v) in iter {
+                table.set(k, v)?;
+            }
+            Ok(())
+        })
     }
 
     /// Create a sequence (1-based array) table from an iterator of values.
@@ -364,11 +365,59 @@ impl Lua {
         V: crate::traits::IntoLua,
         I: IntoIterator<Item = V>,
     {
-        let t = self.create_table();
-        for (i, v) in iter.into_iter().enumerate() {
-            t.raw_set((i + 1) as i64, v)?;
+        self.build_table(0, 0, |table| {
+            for v in iter {
+                table.push(v)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Create an empty table with room for `narr` sequence and `nrec` other
+    /// entries.
+    ///
+    /// Mirrors `mlua::Lua::create_table_with_capacity`.
+    pub fn create_table_with_capacity(&self, narr: usize, nrec: usize) -> Result<Table> {
+        self.build_table(narr, nrec, |_| Ok(()))
+    }
+
+    /// Build a table on the stack, with room for `narr` sequence and `nrec`
+    /// other entries, which `build` fills through a
+    /// [`TableBuilder`](crate::TableBuilder). The table takes its registry
+    /// reference once, when it is done, rather than once for each value set
+    /// into it as [`Table::raw_set`] on a fresh table does; tables built
+    /// inside it take none. Values are set raw, bypassing metamethods.
+    ///
+    /// A luaur extension; mlua has no counterpart.
+    ///
+    /// ```
+    /// # use luaur_rt::{Lua, Result};
+    /// # fn main() -> Result<()> {
+    /// let lua = Lua::new();
+    /// let player = lua.build_table(0, 2, |player| {
+    ///     player.set("name", "ada")?;
+    ///     player.set_table("position", 0, 2, |position| {
+    ///         position.set("x", 1.5)?;
+    ///         position.set("y", -2.0)
+    ///     })
+    /// })?;
+    /// assert_eq!(player.get::<String>("name")?, "ada");
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn build_table<F>(&self, narr: usize, nrec: usize, build: F) -> Result<Table>
+    where
+        F: FnOnce(&mut crate::TableBuilder<'_>) -> Result<()>,
+    {
+        let state = self.state();
+        unsafe {
+            let top = lua_gettop(state);
+            if let Err(error) = crate::table::fill_new_table(self, narr, nrec, build) {
+                lua_settop(state, top);
+                return Err(error);
+            }
+            Ok(Table::from_ref(self.pop_ref()))
         }
-        Ok(t)
     }
 
     /// Run a full garbage-collection cycle.

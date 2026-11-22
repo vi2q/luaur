@@ -17,6 +17,7 @@
 use crate::error::Result;
 use crate::multi::MultiValue;
 use crate::state::Lua;
+use crate::sys::{lua_gettop, lua_settop};
 use crate::value::Value;
 use core::ffi::c_int;
 
@@ -26,6 +27,27 @@ use core::ffi::c_int;
 pub trait IntoLua: Sized {
     /// Perform the conversion.
     fn into_lua(self, lua: &Lua) -> Result<Value>;
+
+    /// Internal: push the converted value straight onto the Lua stack, the
+    /// way mlua's `IntoLua::push_into_stack` does. The default goes through a
+    /// [`Value`]; strings push their bytes directly instead, without first
+    /// taking the registry reference a [`Value::String`] holds.
+    ///
+    /// # Safety
+    ///
+    /// The caller must have reserved a stack slot for the value. On `Err`
+    /// nothing is left pushed.
+    #[doc(hidden)]
+    #[inline]
+    unsafe fn push_into_stack(self, lua: &Lua) -> Result<()> {
+        // A conversion that left values behind would shift what the caller
+        // pushed before it (a table under its key, say).
+        let state = lua.state();
+        let top = unsafe { lua_gettop(state) };
+        let value = self.into_lua(lua);
+        unsafe { lua_settop(state, top) };
+        lua.push_value(&value?)
+    }
 }
 
 /// Convert a single Lua [`Value`] into a Rust value.

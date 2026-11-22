@@ -444,3 +444,22 @@ fn bytecode_compiled_ahead_runs_without_its_source() {
     let evaluated: i64 = lua.load_bytecode(bytecode).eval().unwrap();
     assert_eq!(evaluated, 21);
 }
+
+#[test]
+fn function_environment_and_info_leave_the_stack_as_it_was() {
+    let lua = Lua::new();
+    let top = || unsafe { crate::sys::lua_gettop(lua.state()) };
+    let start = top();
+    let chunk = lua
+        .load("return 1")
+        .set_environment(lua.create_table())
+        .into_function()
+        .unwrap();
+    assert!(chunk.environment().is_some());
+    assert_eq!(chunk.info().what, "Lua");
+    let native = lua.create_function(|_, ()| Ok(())).unwrap();
+    assert!(native.environment().is_none());
+    assert!(!native.set_environment(lua.create_table()).unwrap());
+    assert_eq!(native.info().what, "C");
+    assert_eq!(top(), start);
+}
