@@ -61,14 +61,17 @@ impl Table {
     pub fn set<K: IntoLua, V: IntoLua>(&self, key: K, value: V) -> Result<()> {
         let lua = self.lua();
         let state = lua.state();
-        let k = key.into_lua(&lua)?;
-        let v = value.into_lua(&lua)?;
+        // The table, key and value, then the settable closure below them.
+        ensure_stack(state, 4)?;
         // Drive the (possibly metamethod-invoking) settable under pcall so a
         // raising `__newindex` (or readonly table) surfaces as `Err`.
         unsafe {
+            let top = lua_gettop(state);
             self.reference.push(); // table
-            lua.push_value(&k)?; // key
-            lua.push_value(&v)?; // value
+            if let Err(error) = push_pair(&lua, key, value) {
+                lua_settop(state, top);
+                return Err(error);
+            }
             let status = protected_settable(state);
             if status != 0 {
                 return Err(lua.pop_error(status));
@@ -85,10 +88,15 @@ impl Table {
     pub fn get<V: FromLua>(&self, key: impl IntoLua) -> Result<V> {
         let lua = self.lua();
         let state = lua.state();
-        let k = key.into_lua(&lua)?;
+        // The table and key, then the gettable closure below them.
+        ensure_stack(state, 3)?;
         let value = unsafe {
+            let top = lua_gettop(state);
             self.reference.push(); // table
-            lua.push_value(&k)?; // key
+            if let Err(error) = key.push_into_stack(&lua) {
+                lua_settop(state, top);
+                return Err(error);
+            }
             let status = protected_gettable(state);
             if status != 0 {
                 return Err(lua.pop_error(status));
@@ -220,18 +228,20 @@ impl Table {
     pub fn raw_set<K: IntoLua, V: IntoLua>(&self, key: K, value: V) -> Result<()> {
         let lua = self.lua();
         let state = lua.state();
-        let k = key.into_lua(&lua)?;
-        let v = value.into_lua(&lua)?;
-        if self.is_readonly() {
-            return Err(crate::error::Error::RuntimeError(
-                "attempt to modify a readonly table".to_string(),
-            ));
-        }
         ensure_stack(state, 3)?;
         unsafe {
+            let top = lua_gettop(state);
             self.reference.push(); // table
-            lua.push_value(&k)?; // key
-            lua.push_value(&v)?; // value
+            if let Err(error) = push_pair(&lua, key, value) {
+                lua_settop(state, top);
+                return Err(error);
+            }
+            // Read off the table already pushed, after the conversions, so a
+            // conversion error still comes first.
+            if lua_getreadonly(state, -3) != 0 {
+                lua_settop(state, top);
+                return Err(readonly_error());
+            }
             lua_rawset(state, -3);
             lua_pop(state, 1); // pop table
         }
@@ -244,11 +254,14 @@ impl Table {
     pub fn raw_get<V: FromLua>(&self, key: impl IntoLua) -> Result<V> {
         let lua = self.lua();
         let state = lua.state();
-        let k = key.into_lua(&lua)?;
         ensure_stack(state, 3)?;
         let value = unsafe {
+            let top = lua_gettop(state);
             self.reference.push(); // table
-            lua.push_value(&k)?; // key
+            if let Err(error) = key.push_into_stack(&lua) {
+                lua_settop(state, top);
+                return Err(error);
+            }
             lua_rawget(state, -2); // replaces key with value
             let v = lua.value_from_stack(-1)?;
             lua_pop(state, 2); // pop value + table
@@ -630,6 +643,182 @@ pub(crate) fn create_table(lua: &Lua) -> Table {
         lua_createtable(state, 0, 0);
         Table::from_ref(lua.pop_ref())
     }
+}
+
+/// Push `key` then `value`. On `Err` what was pushed stays; the caller
+/// restores the stack top.
+unsafe fn push_pair(lua: &Lua, key: impl IntoLua, value: impl IntoLua) -> Result<()> {
+    unsafe {
+        key.push_into_stack(lua)?;
+        value.push_into_stack(lua)
+    }
+}
+
+fn readonly_error() -> crate::error::Error {
+    crate::error::Error::RuntimeError("attempt to modify a readonly table".to_string())
+}
+
+// ---------------------------------------------------------------------------
+// Building a table on the stack
+// ---------------------------------------------------------------------------
+
+/// A table being filled on the Lua stack, from [`Lua::build_table`].
+///
+/// The table takes its registry reference once, when it is done, rather than
+/// once for each value set into it, and so do the tables built inside it with
+/// [`TableBuilder::set_table`] and [`TableBuilder::push_table`]; Rust strings
+/// set as keys or values push their bytes without a reference of their own.
+/// Values are set raw, bypassing metamethods.
+///
+/// A luaur extension; mlua has no counterpart.
+pub struct TableBuilder<'lua> {
+    lua: &'lua Lua,
+    /// Absolute stack index of the table, which stays put while it is filled:
+    /// every builder method leaves the stack as it found it.
+    index: c_int,
+    next: i64,
+    readonly: bool,
+}
+
+impl TableBuilder<'_> {
+    /// Set `table[key] = value`, bypassing metamethods.
+    ///
+    /// Errors if the table was made read-only with
+    /// [`TableBuilder::set_readonly`].
+    pub fn set(&mut self, key: impl IntoLua, value: impl IntoLua) -> Result<()> {
+        self.writable()?;
+        let state = self.lua.state();
+        ensure_stack(state, 2)?;
+        unsafe {
+            let top = lua_gettop(state);
+            if let Err(error) = push_pair(self.lua, key, value) {
+                lua_settop(state, top);
+                return Err(error);
+            }
+            lua_rawset(state, self.index);
+        }
+        Ok(())
+    }
+
+    /// Set `table[key]` to a new table with room for `narr` sequence and
+    /// `nrec` other entries, which `build` fills.
+    pub fn set_table<F>(
+        &mut self,
+        key: impl IntoLua,
+        narr: usize,
+        nrec: usize,
+        build: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(&mut TableBuilder<'_>) -> Result<()>,
+    {
+        self.writable()?;
+        let state = self.lua.state();
+        ensure_stack(state, 1)?;
+        unsafe {
+            let top = lua_gettop(state);
+            let pushed = key
+                .push_into_stack(self.lua)
+                .and_then(|()| fill_new_table(self.lua, narr, nrec, build));
+            if let Err(error) = pushed {
+                lua_settop(state, top);
+                return Err(error);
+            }
+            lua_rawset(state, self.index);
+        }
+        Ok(())
+    }
+
+    /// Append `value` after the values appended before: the first call sets
+    /// `table[1]`, the next `table[2]`, and so on.
+    pub fn push(&mut self, value: impl IntoLua) -> Result<()> {
+        self.writable()?;
+        let n = self.next_index()?;
+        let state = self.lua.state();
+        ensure_stack(state, 1)?;
+        unsafe {
+            let top = lua_gettop(state);
+            if let Err(error) = value.push_into_stack(self.lua) {
+                lua_settop(state, top);
+                return Err(error);
+            }
+            lua_rawseti(state, self.index, n);
+        }
+        self.next += 1;
+        Ok(())
+    }
+
+    /// Append a new table with room for `narr` sequence and `nrec` other
+    /// entries, which `build` fills, the way [`TableBuilder::push`] appends.
+    pub fn push_table<F>(&mut self, narr: usize, nrec: usize, build: F) -> Result<()>
+    where
+        F: FnOnce(&mut TableBuilder<'_>) -> Result<()>,
+    {
+        self.writable()?;
+        let n = self.next_index()?;
+        let state = self.lua.state();
+        unsafe {
+            let top = lua_gettop(state);
+            if let Err(error) = fill_new_table(self.lua, narr, nrec, build) {
+                lua_settop(state, top);
+                return Err(error);
+            }
+            lua_rawseti(state, self.index, n);
+        }
+        self.next += 1;
+        Ok(())
+    }
+
+    /// Make the table read-only, or writable again, as
+    /// [`Table::set_readonly`] does. A read-only table takes no more values
+    /// through the builder.
+    pub fn set_readonly(&mut self, enabled: bool) {
+        unsafe { lua_setreadonly(self.lua.state(), self.index, enabled as c_int) };
+        self.readonly = enabled;
+    }
+
+    // `lua_rawset` raises on a read-only table, and nothing here is
+    // protected, so the refusal has to come first.
+    fn writable(&self) -> Result<()> {
+        if self.readonly {
+            return Err(readonly_error());
+        }
+        Ok(())
+    }
+
+    fn next_index(&self) -> Result<c_int> {
+        c_int::try_from(self.next).map_err(|_| {
+            crate::error::Error::RuntimeError("the table's sequence is full".to_string())
+        })
+    }
+}
+
+/// Push a new table with room for `narr` sequence and `nrec` other entries
+/// and fill it with `build`, leaving it on top of the stack. On `Err` what was
+/// pushed stays; the caller restores the stack top.
+pub(crate) unsafe fn fill_new_table<F>(lua: &Lua, narr: usize, nrec: usize, build: F) -> Result<()>
+where
+    F: FnOnce(&mut TableBuilder<'_>) -> Result<()>,
+{
+    let state = lua.state();
+    ensure_stack(state, 1)?;
+    unsafe {
+        lua_createtable(state, capacity(narr), capacity(nrec));
+        let index = lua_gettop(state);
+        let mut builder = TableBuilder {
+            lua,
+            index,
+            next: 1,
+            readonly: false,
+        };
+        build(&mut builder)?;
+        lua_settop(state, index);
+    }
+    Ok(())
+}
+
+fn capacity(entries: usize) -> c_int {
+    c_int::try_from(entries).unwrap_or(c_int::MAX)
 }
 
 // ---------------------------------------------------------------------------

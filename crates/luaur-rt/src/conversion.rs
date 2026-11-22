@@ -320,17 +320,35 @@ impl IntoLua for String {
     fn into_lua(self, lua: &Lua) -> Result<Value> {
         Ok(Value::String(lua.create_string(&self)))
     }
+
+    #[inline]
+    unsafe fn push_into_stack(self, lua: &Lua) -> Result<()> {
+        unsafe { crate::string::push_bytes(lua, self.as_bytes()) };
+        Ok(())
+    }
 }
 
 impl IntoLua for &str {
     fn into_lua(self, lua: &Lua) -> Result<Value> {
         Ok(Value::String(lua.create_string(self)))
     }
+
+    #[inline]
+    unsafe fn push_into_stack(self, lua: &Lua) -> Result<()> {
+        unsafe { crate::string::push_bytes(lua, self.as_bytes()) };
+        Ok(())
+    }
 }
 
 impl IntoLua for &String {
     fn into_lua(self, lua: &Lua) -> Result<Value> {
         Ok(Value::String(lua.create_string(self)))
+    }
+
+    #[inline]
+    unsafe fn push_into_stack(self, lua: &Lua) -> Result<()> {
+        unsafe { crate::string::push_bytes(lua, self.as_bytes()) };
+        Ok(())
     }
 }
 
@@ -811,11 +829,23 @@ impl IntoLua for std::borrow::Cow<'_, str> {
     fn into_lua(self, lua: &Lua) -> Result<Value> {
         Ok(Value::String(lua.create_string(self.as_ref())))
     }
+
+    #[inline]
+    unsafe fn push_into_stack(self, lua: &Lua) -> Result<()> {
+        unsafe { crate::string::push_bytes(lua, self.as_bytes()) };
+        Ok(())
+    }
 }
 
 impl IntoLua for Box<str> {
     fn into_lua(self, lua: &Lua) -> Result<Value> {
         Ok(Value::String(lua.create_string(&*self)))
+    }
+
+    #[inline]
+    unsafe fn push_into_stack(self, lua: &Lua) -> Result<()> {
+        unsafe { crate::string::push_bytes(lua, self.as_bytes()) };
+        Ok(())
     }
 }
 

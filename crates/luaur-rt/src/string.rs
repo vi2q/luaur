@@ -216,9 +216,15 @@ impl PartialEq<std::borrow::Cow<'_, [u8]>> for LuaString {
 /// Helper to create a fresh Lua string from bytes on a given state, returning a
 /// handle. Used by [`Lua::create_string`].
 pub(crate) fn create_string(lua: &Lua, bytes: &[u8]) -> LuaString {
-    let state = lua.state();
     unsafe {
-        lua_pushlstring(state, bytes.as_ptr() as *const c_char, bytes.len());
+        push_bytes(lua, bytes);
         LuaString::from_ref(lua.pop_ref())
     }
+}
+
+/// Push `bytes` as a Lua string without taking a registry reference (the
+/// [`IntoLua::push_into_stack`](crate::IntoLua::push_into_stack) fast path for
+/// Rust strings). The caller must have reserved the stack slot.
+pub(crate) unsafe fn push_bytes(lua: &Lua, bytes: &[u8]) {
+    unsafe { lua_pushlstring(lua.state(), bytes.as_ptr() as *const c_char, bytes.len()) };
 }

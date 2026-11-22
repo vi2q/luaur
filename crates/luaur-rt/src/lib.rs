@@ -138,7 +138,7 @@ pub use scope::Scope;
 pub use state::{Lua, WeakLua};
 pub use string::LuaString;
 pub use sync::{MaybeSend, MaybeSync};
-pub use table::{Table, TablePairs, TableSequence};
+pub use table::{Table, TableBuilder, TablePairs, TableSequence};
 pub use thread::{Thread, ThreadStatus};
 pub use traits::{FromLua, FromLuaMulti, IntoLua, IntoLuaMulti};
 

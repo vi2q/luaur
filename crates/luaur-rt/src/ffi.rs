@@ -44,6 +44,7 @@ pub(crate) use luaur_vm::functions::lua_getreadonly::lua_getreadonly;
 pub(crate) use luaur_vm::functions::lua_insert::lua_insert;
 pub(crate) use luaur_vm::functions::lua_rawget::lua_rawget;
 pub(crate) use luaur_vm::functions::lua_rawset::lua_rawset;
+pub(crate) use luaur_vm::functions::lua_rawseti::lua_rawseti;
 pub(crate) use luaur_vm::functions::lua_setreadonly::lua_setreadonly;
 pub(crate) use luaur_vm::functions::lua_topointer::lua_topointer;
 
